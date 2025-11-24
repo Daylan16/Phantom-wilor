@@ -8,6 +8,27 @@ from omegaconf import DictConfig
 from phantom.processors.base_processor import BaseProcessor
 
 logging.basicConfig(level=logging.WARNING, format="%(name)s - %(levelname)s - %(message)s")
+# ==================== START OF DEBUGGING BLOCK ====================
+print("\n" + "="*50)
+print("--- RUNNING DIRECT DETECTOR TEST ---")
+try:
+    import numpy as np
+    from phantom.detectors.detector_dino import DetectorDino
+    print("--- 1. Initializing DetectorDino... ---")
+    dino_detector = DetectorDino("IDEA-Research/grounding-dino-base")
+    print("--- 2. Detector Initialized. Creating a blank test image... ---")
+    blank_image = np.zeros((480, 640, 3), dtype=np.uint8)
+    print("--- 3. Running get_bboxes() on the blank image... ---")
+    bboxes, scores = dino_detector.get_bboxes(blank_image, "a hand")
+    print(f"--- 4. TEST SUCCEEDED! Detector found {len(bboxes)} boxes on blank image. ---")
+except Exception as e:
+    print(f"--- 5. TEST FAILED! THIS IS THE REAL ERROR: ---")
+    import traceback
+    traceback.print_exc() # This forces the full error message to be printed
+print("="*50 + "\n")
+# ===================== END OF DEBUGGING BLOCK =====================
+
+
 
 class ProcessingMode(Enum):
     """Enumeration of valid processing modes."""
@@ -80,6 +101,30 @@ def process_one_demo(data_sub_folder: str, cfg: DictConfig, processor_classes: d
             print(f"Error in {mode} processing: {e}")
             if cfg.debug:
                 raise
+# ---------------------------------------------------------------------------
+
+# ADD THIS NEW FUNCTION
+def _parallel_worker_main(processor_cls, cfg, data_sub_folder):
+    """
+    A top-level wrapper function for joblib.Parallel to call.
+    This ensures the processor is initialized *inside* the worker process.
+    """
+    try:
+        processor = processor_cls(cfg)
+        processor.process_one_demo(data_sub_folder)
+        return (data_sub_folder, None)  # Return success
+    except Exception as e:
+        print(f"--- ERROR IN WORKER for demo {data_sub_folder} ---")
+        print(f"Error: {e}")
+        # In case of pickling errors in the *exception* itself, print traceback here
+        import traceback
+        traceback.print_exc()
+        return (data_sub_folder, e)  # Return failure
+
+#----------------------------------------------------------------------------
+
+
+
 
 def process_all_demos(cfg: DictConfig, processor_classes: dict) -> None:
     # Choose processing order based on epic flag
@@ -152,10 +197,32 @@ def process_all_demos_parallel(cfg: DictConfig, processor_classes: dict) -> None
     for mode in selected_modes:
         print(f"----------------- {mode.upper()} PROCESSOR -----------------")
         processor_cls = processor_classes[mode]
-        processor = processor_cls(cfg) 
-        Parallel(n_jobs=cfg.n_processes)(
-            delayed(processor.process_one_demo)(data_sub_folder) for data_sub_folder in all_data_folders
-        )
+        
+        # Create a list of tasks. We pass the CLASS and CONFIG, not the instantiated object.
+        # These are picklable.
+        tasks = [
+            delayed(_parallel_worker_main)(processor_cls, cfg, data_sub_folder)
+            for data_sub_folder in all_data_folders
+        ]
+        
+        # Run the tasks in parallel
+        print(f"Starting {len(tasks)} parallel jobs for mode '{mode}' across {cfg.n_processes} processes...")
+        results = Parallel(n_jobs=cfg.n_processes)(tasks)
+        
+        # Check for any errors returned from the workers
+        n_errors = 0
+        for data_sub_folder, error in results:
+            if error is not None:
+                print(f"--- FAILED JOB: Mode '{mode}', Demo '{data_sub_folder}', Error: {error} ---")
+                n_errors += 1
+        
+        if n_errors == 0:
+            print(f"All {len(tasks)} jobs for mode '{mode}' completed successfully.")
+        else:
+            print(f"Mode '{mode}' completed with {n_errors} failures.")
+            if cfg.debug:
+                raise Exception("Parallel processing failed, see logs above.")
+
 
 def get_processor_classes(cfg: DictConfig) -> dict:
     """Initialize the processor classes"""

@@ -21,7 +21,7 @@ output_resolution: 256
 robot: "Kinova3"
 gripper: "Robotiq85"
 square: false
-epic: true
+epic: false
 bimanual_setup: "shoulders"
 target_hand: "both"
 constrained_hand: false

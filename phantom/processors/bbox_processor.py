@@ -158,7 +158,7 @@ class BBoxProcessor(BaseProcessor):
 
         # Process frames based on dataset type
         if self.epic:
-            self._load_epic_hand_data(paths)
+            self._load_epic_hand_data(paths , imgs_rgb)
             detection_results = self._process_epic_frames(imgs_rgb)
         else:
             detection_results = self._process_frames(imgs_rgb)
@@ -296,7 +296,10 @@ class BBoxProcessor(BaseProcessor):
             detection_arrays['right_bboxes'][idx] = best_bbox
             detection_arrays['right_bboxes_ctr'][idx] = best_bbox_ctr
             detection_arrays['right_hand_detected'][idx] = True
-     
+
+
+
+    
 
     # ============================================================================
     # EPIC-SPECIFIC METHODS (EPIC Dataset Processing)
@@ -326,40 +329,83 @@ class BBoxProcessor(BaseProcessor):
             logging.warning(f"Error validating EPIC data structure: {str(e)}")
             return False
 
-    def _load_epic_hand_data(self, paths: Paths) -> Dict[str, Any]:
-        """
-        Load and validate pre-computed hand detection data from EPIC-KITCHENS dataset.
+    # def _load_epic_hand_data(self, paths: Paths) -> Dict[str, Any]:
+    #     """
+    #     Load and validate pre-computed hand detection data from EPIC-KITCHENS dataset.
         
-        EPIC-KITCHENS provides pre-computed hand detection annotations that we can
-        use directly instead of running our own detection. This method filters and
-        sorts the data for efficient frame-by-frame processing.
+    #     EPIC-KITCHENS provides pre-computed hand detection annotations that we can
+    #     use directly instead of running our own detection. This method filters and
+    #     sorts the data for efficient frame-by-frame processing.
         
-        Args:
-            paths: Paths object containing detection data file location
+    #     Args:
+    #         paths: Paths object containing detection data file location
             
-        Returns:
-            Dictionary of filtered and sorted hand detection data
+    #     Returns:
+    #         Dictionary of filtered and sorted hand detection data
             
-        Raises:
-            FileNotFoundError: If detection data file doesn't exist
+    #     Raises:
+    #         FileNotFoundError: If detection data file doesn't exist
+    #     """
+    #     if not os.path.exists(paths.hand_detection_data):
+    #         raise FileNotFoundError(f"Hand detection data not found: {paths.hand_detection_data}")
+        
+    #     with open(paths.hand_detection_data, 'rb') as f:
+    #         hand_detection_data = dict(pickle.load(f))
+        
+    #     # Filter out detection objects without valid side information
+    #     filtered_data = {
+    #         key: [obj for obj in obj_list if hasattr(obj, 'side')]
+    #         for key, obj_list in hand_detection_data.items()
+    #     }
+        
+    #     # Sort by frame index for sequential processing
+    #     self.filtered_hand_detection_data = dict(sorted(filtered_data.items(), key=lambda x: int(x[0])))
+    #     self.sorted_keys = sorted(self.filtered_hand_detection_data.keys(), key=lambda k: int(k))
+        
+    #     return self.filtered_hand_detection_data
+
+    # REPLACE your old function with this one
+
+    def _load_epic_hand_data(self, paths: Paths, imgs_rgb: np.ndarray) -> Dict[str, Any]:
         """
-        if not os.path.exists(paths.hand_detection_data):
-            raise FileNotFoundError(f"Hand detection data not found: {paths.hand_detection_data}")
-        
-        with open(paths.hand_detection_data, 'rb') as f:
-            hand_detection_data = dict(pickle.load(f))
-        
+        Load pre-computed hand detection data from EPIC-KITCHENS dataset.
+        If the data does not exist, it falls back to running the DINO detector,
+        saves the results, and then loads them.
+        """
+        if os.path.exists(paths.hand_detection_data):
+            # File exists, load it directly
+            logger.info(f"Found existing hand detection data at {paths.hand_detection_data}. Loading...")
+            with open(paths.hand_detection_data, 'rb') as f:
+                hand_detection_data = dict(pickle.load(f))
+        else:
+            # File does NOT exist, run DINO detector as a fallback
+            logger.warning(f"Hand detection data not found. Running DINO detector to generate it...")
+            
+            # 1. Run DINO detection (this is the logic from the non-EPIC path)
+            dino_results = self._process_frames(imgs_rgb)
+            
+            # 2. Convert the DINO results to the EPIC .pkl format
+            logger.info("Converting DINO results to EPIC format...")
+            epic_formatted_data = self._convert_dino_to_epic_format(dino_results, imgs_rgb)
+
+            # 3. Save the newly generated data as a .pkl file for future use
+            with open(paths.hand_detection_data, 'wb') as f:
+                pickle.dump(epic_formatted_data, f)
+            logger.info(f"Saved newly generated DINO detections to {paths.hand_detection_data}")
+            hand_detection_data = epic_formatted_data
+
         # Filter out detection objects without valid side information
         filtered_data = {
             key: [obj for obj in obj_list if hasattr(obj, 'side')]
             for key, obj_list in hand_detection_data.items()
         }
-        
-        # Sort by frame index for sequential processing
+    
+    # Sort by frame index for sequential processing
         self.filtered_hand_detection_data = dict(sorted(filtered_data.items(), key=lambda x: int(x[0])))
         self.sorted_keys = sorted(self.filtered_hand_detection_data.keys(), key=lambda k: int(k))
         
         return self.filtered_hand_detection_data
+        
 
     def _process_epic_frames(self, imgs_rgb: npt.NDArray[np.uint8]) -> DetectionResults:
         """
@@ -524,6 +570,61 @@ class BBoxProcessor(BaseProcessor):
             return False
         return True
 
+
+
+
+
+    # Add this new function inside the BBoxProcessor class
+
+    def _convert_dino_to_epic_format(self, dino_results: Dict[str, np.ndarray], imgs_rgb: np.ndarray) -> Dict[int, list]:
+        """
+        Converts detection results from the DINO detector format (NumPy arrays)
+        into the EPIC-KITCHENS format (dictionary of HandDetection objects).
+        """
+        from collections import namedtuple
+        from enum import Enum
+
+        # Define the necessary data structures to mimic the original .pkl file
+        BBox = namedtuple('BBox', ['left', 'top', 'right', 'bottom'])
+        FloatVector = namedtuple('FloatVector', ['x', 'y'])
+        class HandState(Enum):
+            PORTABLE_OBJECT = 3
+        class HandSide(Enum):
+            LEFT = 0
+            RIGHT = 1
+        HandDetection = namedtuple('HandDetection', ['bbox', 'score', 'state', 'side', 'object_offset'])
+        
+        num_frames = len(imgs_rgb)
+        H, W, _ = imgs_rgb[0].shape
+        epic_formatted_data = {}
+
+        for i in range(num_frames):
+            frame_detections = []
+            # Process left hand if detected
+            if dino_results['left_hand_detected'][i]:
+                bbox = dino_results['left_bboxes'][i]
+                bbox_obj = BBox(left=bbox[0]/W, top=bbox[1]/H, right=bbox[2]/W, bottom=bbox[3]/H)
+                detection = HandDetection(
+                    bbox=bbox_obj, score=0.99, state=HandState.PORTABLE_OBJECT,
+                    side=HandSide.LEFT, object_offset=FloatVector(0.0, 0.0)
+                )
+                frame_detections.append(detection)
+
+            # Process right hand if detected
+            if dino_results['right_hand_detected'][i]:
+                bbox = dino_results['right_bboxes'][i]
+                bbox_obj = BBox(left=bbox[0]/W, top=bbox[1]/H, right=bbox[2]/W, bottom=bbox[3]/H)
+                detection = HandDetection(
+                    bbox=bbox_obj, score=0.99, state=HandState.PORTABLE_OBJECT,
+                    side=HandSide.RIGHT, object_offset=FloatVector(0.0, 0.0)
+                )
+                frame_detections.append(detection)
+            
+            if frame_detections:
+                # The keys in the original pkl file are strings of frame numbers
+                epic_formatted_data[str(i)] = frame_detections
+                
+        return epic_formatted_data
 
     # ============================================================================
     # UTILITY/HELPER METHODS (General utilities and post-processing)

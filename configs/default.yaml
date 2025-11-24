@@ -19,7 +19,7 @@ input_resolution: 1080
 output_resolution: 240
 robot: "Panda"
 gripper: "Robotiq85"
-square: true
+square: false
 epic: false
 bimanual_setup: "single_arm"
 target_hand: "left"

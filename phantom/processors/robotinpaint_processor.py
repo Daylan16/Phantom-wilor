@@ -714,7 +714,7 @@ class RobotInpaintProcessor(BaseProcessor):
         # Phantom paper
         elif self.input_resolution == 1080:
             img_w = self.input_resolution * 16 // 9
-        img_h = self.input_resolution
+        img_h = self.input_resolution 
         return img_w, img_h
     
     def _calculate_image_offset(self, img_w: int, img_h: int) -> int:

@@ -1,8 +1,10 @@
-eval "$(conda shell.bash hook)"
+export PATH="/home/dipam.modh/.local/bin:$PATH"
+
+eval "$(micromamba shell hook -s bash)"
 # ######################## Phantom Env ###############################
-conda create -n phantom python=3.10 -y
-conda activate phantom
-conda install nvidia/label/cuda-12.1.0::cuda-toolkit -c nvidia/label/cuda-12.1.0 -y
+micromamba create -n phantom_new python=3.10 -c conda-forge -y
+micromamba activate phantom_new
+micromamba install -c nvidia cuda-toolkit=12.1 -y
 
 # Install SAM2
 cd submodules/sam2
@@ -18,10 +20,10 @@ tar --warning=no-unknown-keyword --exclude=".*" -xvf hamer_demo_data.tar.gz
 cd ../..
 
 # Install mmcv
-pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.1.0 torchvision==0.16.0
+pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
 pip install mmcv==1.3.9
-pip install mmcv-full -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.1/index.html
-pip install numpy==1.26.4
+pip install mmcv-full -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.5/index.html
+pip install numpy==2.1.0
 
 # Install phantom-robosuite
 cd submodules/phantom-robosuite
@@ -35,7 +37,7 @@ cd ../..
 
 # Install additional packages
 pip install joblib mediapy open3d pandas
-pip install transformers==4.42.4
+pip install transformers
 pip install PyOpenGL==3.1.4
 pip install Rtree
 pip install git+https://github.com/epic-kitchens/epic-kitchens-100-hand-object-bboxes.git

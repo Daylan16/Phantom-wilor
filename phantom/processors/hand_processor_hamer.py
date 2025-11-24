@@ -39,7 +39,7 @@ import argparse
 from phantom.utils.pcd_utils import get_visible_points, get_pcd_from_points, icp_registration, get_point_cloud_of_segmask, get_3D_points_from_pixels, remove_outliers, get_bbox_of_3d_points, trim_pcd_to_bbox, visualize_pcds
 from phantom.utils.transform_utils import transform_pts
 from phantom.processors.base_processor import BaseProcessor
-from phantom.detectors.detector_wilor import DetectorWiLoR
+from phantom.detectors.detector_hamer import DetectorHamer
 from phantom.processors.phantom_data import HandSequence, HandFrame, hand_side_dict
 from phantom.processors.paths import Paths
 from phantom.processors.segmentation_processor import HandSegmentationProcessor
@@ -67,7 +67,7 @@ class HandBaseProcessor(BaseProcessor):
     Attributes:
         process_hand_masks (bool): Whether to generate hand segmentation masks
         apply_depth_alignment (bool): Whether to use depth-based pose refinement
-        detector_wilor (DetectorHamer): HaMeR pose estimation model
+        detector_hamer (DetectorHamer): HaMeR pose estimation model
         hand_mask_processor: Segmentation processor for hand mask generation
         H (int): Video frame height
         W (int): Video frame width
@@ -95,7 +95,7 @@ class HandBaseProcessor(BaseProcessor):
         
         Sets up the HaMeR detector for hand pose estimation. 
         """
-        self.detector_wilor = DetectorWiLoR()
+        self.detector_hamer = DetectorHamer()
 
     def process_one_demo(self, data_sub_folder: str) -> None:
         """
@@ -330,7 +330,7 @@ class HandBaseProcessor(BaseProcessor):
         Returns:
             Trimesh object representing the hand mesh
         """
-        return trimesh.Trimesh(hamer_out["verts"].copy(), self.detector_wilor.faces_left.copy(), process=False)
+        return trimesh.Trimesh(hamer_out["verts"].copy(), self.detector_hamer.faces_left.copy(), process=False)
     
     def _get_hand_masks(self, data_sub_folder: str, hamer_data_left: HandSequence, hamer_data_right: HandSequence) -> None:
         """
@@ -351,13 +351,13 @@ class HandBaseProcessor(BaseProcessor):
         self.hand_mask_processor.process_one_demo(data_sub_folder, hamer_data)
 
     @staticmethod
-    def _get_visible_pts_from_hamer(detector_wilor: DetectorWiLoR, hamer_out: Dict[str, Any], mesh: trimesh.Trimesh,
+    def _get_visible_pts_from_hamer(detector_hamer: DetectorHamer, hamer_out: Dict[str, Any], mesh: trimesh.Trimesh,
                                 img_depth: np.ndarray, cam_intrinsics: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
         """
         Identify visible hand vertices and their corresponding depth points.
         
         Args:
-            detector_wilor: HaMeR detector instance for coordinate projections
+            detector_hamer: HaMeR detector instance for coordinate projections
             hamer_out: HaMeR output containing pose estimates and camera parameters
             mesh: 3D hand mesh generated from HaMeR output
             img_depth: Depth image corresponding to the RGB frame
@@ -372,7 +372,7 @@ class HandBaseProcessor(BaseProcessor):
         visible_hamer_vertices, _ = get_visible_points(mesh, origin=np.array([0,0,0]))
         
         # Project 3D vertices to 2D image coordinates
-        visible_points_2d = detector_wilor.project_3d_kpt_to_2d(
+        visible_points_2d = detector_hamer.project_3d_kpt_to_2d(
             (visible_hamer_vertices-hamer_out["T_cam_pred"].cpu().numpy()).astype(np.float32), 
             hamer_out["img_w"], hamer_out["img_h"], hamer_out["scaled_focal_length"], 
             hamer_out["camera_center"], hamer_out["T_cam_pred"])
@@ -498,7 +498,7 @@ class Hand2DProcessor(HandBaseProcessor):
         is_right = np.array([hand_side_dict[str(hand_side)]*True]*len(bboxes))
         
         # Apply HaMeR pose estimation
-        hamer_out = self.detector_wilor.detect_hand_keypoints(
+        hamer_out = self.detector_hamer.detect_hand_keypoints(
             img_rgb, 
             hand_side=hand_side, 
             bboxes=bboxes, 
@@ -576,7 +576,7 @@ class Hand3DProcessor(HandBaseProcessor):
         is_right = np.array([hand_side_dict[str(hand_side)]*True]*len(bboxes))
         
         # Apply HaMeR with 2D keypoint focus (3D refinement happens later)
-        hamer_out = self.detector_wilor.detect_hand_keypoints(
+        hamer_out = self.detector_hamer.detect_hand_keypoints(
             img_rgb, 
             hand_side=hand_side, 
             bboxes=bboxes, 
@@ -659,7 +659,7 @@ class Hand3DProcessor(HandBaseProcessor):
 
         # Identify visible mesh vertices and corresponding depth points
         visible_points_3d, visible_hamer_vertices = self._get_visible_pts_from_hamer(
-            self.detector_wilor, 
+            self.detector_hamer, 
             hamer_out, 
             mesh, 
             img_depth, 
