@@ -13,3 +13,6 @@
 [submodule "submodules/phantom-hamer"]
 	path = submodules/phantom-hamer
 	url = git@github.com:MarionLepert/phantom-hamer.git
+[submodule "submodules/WiLoR"]
+	path = submodules/WiLoR
+	url = https://github.com/rolpotamias/WiLoR.git
